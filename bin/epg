@@ -7,10 +7,12 @@ use EpgAggregator\Store\SqliteConnectionFactory;
 use EpgAggregator\Store\SchemaManager;
 use EpgAggregator\Store\ChannelRepository;
 use EpgAggregator\Store\ProgramRepository;
-use EpgAggregator\Ingest\Source1Client;
+use EpgAggregator\Ingest\Source1Client;        // ak sa volá SourceClient.php
 use EpgAggregator\Parse\Source1Parser;
 use EpgAggregator\Normalize\Source1Normalizer;
 use EpgAggregator\Domain\Program;
+use EpgAggregator\Export\XmltvExporter;
+use EpgAggregator\Export\JsonExporter;
 
 $argvCopy = $argv;
 array_shift($argvCopy); // zahodíme názov skriptu
@@ -107,10 +109,39 @@ switch ($command) {
         echo "  skipped (duplicates): {$skippedDuplicate}\n";
         break;
 
+    case 'export':
+        $format = $argvCopy[1] ?? null;
+        $path   = $argvCopy[2] ?? null;
+
+        if ($format === null || $path === null) {
+            fwrite(STDERR, "Usage:\n");
+            fwrite(STDERR, "  epg export xmltv /path/to/epg.xml[.gz]\n");
+            fwrite(STDERR, "  epg export json  /path/to/epg.json\n");
+            exit(1);
+        }
+
+        $schemaManager->ensureSchema();
+
+        if ($format === 'xmltv') {
+            $exporter = new XmltvExporter($channelRepo, $programRepo);
+            $exporter->export($path);
+            echo "XMLTV exported to {$path}\n";
+        } elseif ($format === 'json') {
+            $exporter = new JsonExporter($channelRepo, $programRepo);
+            $exporter->export($path);
+            echo "JSON exported to {$path}\n";
+        } else {
+            fwrite(STDERR, "Unknown export format: {$format}\n");
+            exit(1);
+        }
+        break;
+
     default:
         echo "EPG Aggregator CLI\n";
         echo "Usage:\n";
-        echo "  epg migrate                     Initialize/update SQLite schema\n";
-        echo "  epg import source1 file.xml[.gz]  Import XMLTV file from source1\n";
+        echo "  epg migrate                          Initialize/update SQLite schema\n";
+        echo "  epg import source1 file.xml[.gz]     Import XMLTV file from source1\n";
+        echo "  epg export xmltv epg.xml[.gz]        Export DB as XMLTV\n";
+        echo "  epg export json  epg.json            Export DB as JSON\n";
         exit(0);
 }

@@ -2,58 +2,80 @@
 
 namespace EpgAggregator\Store;
 
-use EpgAggregator\Domain\Channel;
 use PDO;
+use EpgAggregator\Domain\Channel;
 
 final class ChannelRepository
 {
     public function __construct(
-        private PDO $pdo
+        private PDO $pdo,
     ) {}
 
     public function upsert(Channel $channel): Channel
     {
+        // najprv skúsime nájsť existujúci kanál podľa xmltv_id
         $stmt = $this->pdo->prepare(
-            'INSERT INTO channels (xmltv_id, name, logo_url)
-             VALUES (:xmltv_id, :name, :logo_url)
-             ON CONFLICT(xmltv_id) DO UPDATE SET
-               name = excluded.name,
-               logo_url = excluded.logo_url'
+            'SELECT id, xmltv_id, name, logo_url FROM channels WHERE xmltv_id = :xmltv_id'
         );
+        $stmt->execute(['xmltv_id' => $channel->xmltvId]);
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
 
-        $stmt->execute([
-            ':xmltv_id' => $channel->xmltvId,
-            ':name'     => $channel->name,
-            ':logo_url' => $channel->logoUrl,
+        if ($row) {
+            // updatneme meno/logo, ak sa zmenili
+            $update = $this->pdo->prepare(
+                'UPDATE channels SET name = :name, logo_url = :logo_url WHERE id = :id'
+            );
+            $update->execute([
+                'name'     => $channel->name,
+                'logo_url' => $channel->logoUrl,
+                'id'       => $row['id'],
+            ]);
+
+            return new Channel(
+                id: (int) $row['id'],
+                xmltvId: $row['xmltv_id'],
+                name: $channel->name,
+                logoUrl: $channel->logoUrl,
+            );
+        }
+
+        // insert
+        $insert = $this->pdo->prepare(
+            'INSERT INTO channels (xmltv_id, name, logo_url) VALUES (:xmltv_id, :name, :logo_url)'
+        );
+        $insert->execute([
+            'xmltv_id' => $channel->xmltvId,
+            'name'     => $channel->name,
+            'logo_url' => $channel->logoUrl,
         ]);
 
-        $id = (int)$this->pdo
-            ->query('SELECT id FROM channels WHERE xmltv_id = ' . $this->pdo->quote($channel->xmltvId))
-            ->fetchColumn();
-
         return new Channel(
-            $id,
-            $channel->xmltvId,
-            $channel->name,
-            $channel->logoUrl
+            id: (int) $this->pdo->lastInsertId(),
+            xmltvId: $channel->xmltvId,
+            name: $channel->name,
+            logoUrl: $channel->logoUrl,
         );
     }
 
-    /** @return Channel[] */
+    /**
+     * @return Channel[]
+     */
     public function findAll(): array
     {
-        $rows = $this->pdo
-            ->query('SELECT * FROM channels ORDER BY id')
-            ->fetchAll(PDO::FETCH_ASSOC);
-
-        return array_map(
-            fn (array $row) => new Channel(
-                (int)$row['id'],
-                $row['xmltv_id'],
-                $row['name'],
-                $row['logo_url'] ?? null
-            ),
-            $rows
+        $stmt = $this->pdo->query(
+            'SELECT id, xmltv_id, name, logo_url FROM channels ORDER BY id ASC'
         );
+
+        $channels = [];
+        while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
+            $channels[] = new Channel(
+                id: (int) $row['id'],
+                xmltvId: $row['xmltv_id'],
+                name: $row['name'],
+                logoUrl: $row['logo_url'],
+            );
+        }
+
+        return $channels;
     }
 }
