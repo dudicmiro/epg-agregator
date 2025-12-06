@@ -5,6 +5,12 @@ require __DIR__ . '/../vendor/autoload.php';
 
 use EpgAggregator\Store\SqliteConnectionFactory;
 use EpgAggregator\Store\SchemaManager;
+use EpgAggregator\Store\ChannelRepository;
+use EpgAggregator\Store\ProgramRepository;
+use EpgAggregator\Ingest\Source1Client;
+use EpgAggregator\Parse\Source1Parser;
+use EpgAggregator\Normalize\Source1Normalizer;
+use EpgAggregator\Domain\Program;
 
 $argvCopy = $argv;
 array_shift($argvCopy); // zahodíme názov skriptu
@@ -20,8 +26,11 @@ $dbPath = $varDir . '/epg.sqlite';
 
 // pripojenie + schema manager
 $connectionFactory = new SqliteConnectionFactory($dbPath);
-$pdo = $connectionFactory->create();
-$schemaManager = new SchemaManager($pdo);
+$pdo               = $connectionFactory->create();
+$schemaManager     = new SchemaManager($pdo);
+
+$channelRepo = new ChannelRepository($pdo);
+$programRepo = new ProgramRepository($pdo);
 
 switch ($command) {
     case 'migrate':
@@ -29,10 +38,79 @@ switch ($command) {
         echo "Database schema ensured at {$dbPath}\n";
         break;
 
+    case 'import':
+        $source = $argvCopy[1] ?? null;
+        $path   = $argvCopy[2] ?? null;
+
+        if ($source !== 'source1' || $path === null) {
+            fwrite(STDERR, "Usage: epg import source1 /path/to/source1.xml[.gz]\n");
+            exit(1);
+        }
+
+        $schemaManager->ensureSchema();
+
+        $client = new Source1Client($path);
+        $raw    = $client->fetch();
+
+        $parser = new Source1Parser();
+        $parsed = $parser->parse($raw);
+
+        $normalizer = new Source1Normalizer();
+        $normalized = $normalizer->normalize($parsed, 'source1');
+
+        // persist channels
+        $channelsByXmltvId = [];
+        foreach ($normalized->channels as $ch) {
+            $saved = $channelRepo->upsert($ch);
+            if ($saved->id === null) {
+                continue;
+            }
+            $channelsByXmltvId[$saved->xmltvId] = $saved;
+        }
+
+        $inserted         = 0;
+        $skippedNoChannel = 0;
+        $skippedDuplicate = 0;
+
+        foreach ($normalized->programs as $np) {
+            if (!isset($channelsByXmltvId[$np->channelXmltvId])) {
+                $skippedNoChannel++;
+                continue;
+            }
+
+            $channel = $channelsByXmltvId[$np->channelXmltvId];
+
+            $program = new Program(
+                id: null,
+                channelId: $channel->id,
+                title: $np->title,
+                subtitle: $np->subtitle,
+                description: $np->description,
+                startUtc: $np->startUtc,
+                endUtc: $np->endUtc,
+                source: $np->source,
+                sourceProgramId: $np->sourceProgramId,
+                dedupKey: $np->dedupKey,
+            );
+
+            $saved = $programRepo->insertIgnoreDuplicate($program);
+            if ($saved === null) {
+                $skippedDuplicate++;
+            } else {
+                $inserted++;
+            }
+        }
+
+        echo "Import from source1 finished.\n";
+        echo "  programs inserted:    {$inserted}\n";
+        echo "  skipped (no channel): {$skippedNoChannel}\n";
+        echo "  skipped (duplicates): {$skippedDuplicate}\n";
+        break;
+
     default:
         echo "EPG Aggregator CLI\n";
         echo "Usage:\n";
-        echo "  epg migrate         Initialize/update SQLite schema\n";
-        // neskôr: epg import, epg export xmltv/json
+        echo "  epg migrate                     Initialize/update SQLite schema\n";
+        echo "  epg import source1 file.xml[.gz]  Import XMLTV file from source1\n";
         exit(0);
 }
