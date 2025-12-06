@@ -3,4 +3,36 @@
 
 require __DIR__ . '/../vendor/autoload.php';
 
-echo "EPG Aggregator CLI – skeleton\n";
+use EpgAggregator\Store\SqliteConnectionFactory;
+use EpgAggregator\Store\SchemaManager;
+
+$argvCopy = $argv;
+array_shift($argvCopy); // zahodíme názov skriptu
+
+$command = $argvCopy[0] ?? null;
+
+// cesta k SQLite DB
+$varDir = __DIR__ . '/../var';
+if (!is_dir($varDir)) {
+    mkdir($varDir, 0777, true);
+}
+$dbPath = $varDir . '/epg.sqlite';
+
+// pripojenie + schema manager
+$connectionFactory = new SqliteConnectionFactory($dbPath);
+$pdo = $connectionFactory->create();
+$schemaManager = new SchemaManager($pdo);
+
+switch ($command) {
+    case 'migrate':
+        $schemaManager->ensureSchema();
+        echo "Database schema ensured at {$dbPath}\n";
+        break;
+
+    default:
+        echo "EPG Aggregator CLI\n";
+        echo "Usage:\n";
+        echo "  epg migrate         Initialize/update SQLite schema\n";
+        // neskôr: epg import, epg export xmltv/json
+        exit(0);
+}
