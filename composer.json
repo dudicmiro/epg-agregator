@@ -1,0 +1,16 @@
+{
+  "name": "dudicmiro/epg-aggregator",
+  "description": "Načítať EPG z viacerých zdrojov → parsovať → normalizovať → uložiť → exportovať XMLTV/JSON.",
+  "type": "project",
+  "require": {
+    "php": "^8.2"
+  },
+  "autoload": {
+    "psr-4": {
+      "EpgAggregator\\": "src/"
+    }
+  },
+  "require-dev": {
+    "phpunit/phpunit": "^11.0"
+  }
+}
