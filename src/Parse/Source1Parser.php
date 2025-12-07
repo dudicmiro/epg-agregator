@@ -11,53 +11,81 @@ final class Source1Parser implements ParserInterface
         // Povoliť veľké XML + chyby držať interne
         libxml_use_internal_errors(true);
 
-        try {
-            $xml = new SimpleXMLElement($raw, LIBXML_PARSEHUGE);
-        } catch (\Throwable $e) {
+        $xml = simplexml_load_string(
+            $raw,
+            SimpleXMLElement::class,
+            LIBXML_PARSEHUGE
+        );
+
+        if ($xml === false) {
             $errors = libxml_get_errors();
-            $msg = $errors ? trim($errors[0]->message) : $e->getMessage();
-
             libxml_clear_errors();
-            libxml_use_internal_errors(false);
 
-            throw new \RuntimeException('Failed to parse XMLTV: ' . $msg, 0, $e);
+            $message = 'Failed to parse XMLTV.';
+            if (!empty($errors)) {
+                $first = $errors[0];
+                $message .= sprintf(
+                    ' Line %d, column %d: %s',
+                    $first->line,
+                    $first->column,
+                    trim($first->message)
+                );
+            }
+
+            throw new \RuntimeException($message);
         }
 
-        libxml_clear_errors();
-        libxml_use_internal_errors(false);
+        // --- channels ---
 
         $channels = [];
-        foreach ($xml->channel as $ch) {
-            $id   = (string) $ch['id'];
-            $name = (string) ($ch->{'display-name'} ?? $id);
-            $logo = isset($ch->icon['src']) ? (string) $ch->icon['src'] : null;
+        foreach ($xml->channel as $channelEl) {
+            $xmltvId = (string) $channelEl['id'];
 
-            $channels[] = new ParsedChannel(
-                id: $id,
-                name: $name,
-                logoUrl: $logo,
-            );
+            $name = '';
+            if (isset($channelEl->{'display-name'})) {
+                $name = (string) $channelEl->{'display-name'}[0];
+            }
+
+            $logoUrl = null;
+            if (isset($channelEl->icon['src'])) {
+                $logoUrl = (string) $channelEl->icon['src'];
+            }
+
+            if ($xmltvId === '' && $name === '') {
+                continue;
+            }
+
+            // POZÍCIOVÉ argumenty – nezávislé od názvov parametrov v ParsedChannel
+            $channels[] = new ParsedChannel($xmltvId, $name, $logoUrl);
         }
 
+        // --- programmes ---
+
         $programs = [];
-        foreach ($xml->programme as $p) {
-            $channelId   = (string) $p['channel'];
-            $start       = (string) $p['start'];
-            $stop        = (string) $p['stop'];
-            $title       = (string) $p->title;
-            $subtitle    = isset($p->{'sub-title'}) ? (string) $p->{'sub-title'} : null;
-            $description = isset($p->desc) ? (string) $p->desc : null;
+        foreach ($xml->programme as $progEl) {
+            $channelId = (string) $progEl['channel'];
+            if ($channelId === '') {
+                continue;
+            }
+
+            $start = (string) $progEl['start'];
+            $stop  = (string) $progEl['stop'];
+
+            $title = isset($progEl->title) ? (string) $progEl->title : '';
+            $subtitle = isset($progEl->{'sub-title'}) ? (string) $progEl->{'sub-title'} : null;
+            $description = isset($progEl->desc) ? (string) $progEl->desc : null;
 
             $programId = sha1($channelId . '|' . $start . '|' . $stop . '|' . $title);
 
+            // opäť pozíciové argumenty
             $programs[] = new ParsedProgram(
-                sourceProgramId: $programId,
-                channelId: $channelId,
-                title: $title,
-                subtitle: $subtitle,
-                description: $description,
-                startRaw: $start,
-                endRaw: $stop,
+                $programId,
+                $channelId,
+                $title,
+                $subtitle,
+                $description,
+                $start,
+                $stop,
             );
         }
 

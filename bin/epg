@@ -8,12 +8,13 @@ use EpgAggregator\Store\SchemaManager;
 use EpgAggregator\Store\ChannelRepository;
 use EpgAggregator\Store\ProgramRepository;
 use EpgAggregator\Store\SettingsRepository;
-use EpgAggregator\Ingest\Source1Client;        // ak sa volá SourceClient.php
+use EpgAggregator\Ingest\Source1Client;
 use EpgAggregator\Parse\Source1Parser;
 use EpgAggregator\Normalize\Source1Normalizer;
 use EpgAggregator\Domain\Program;
 use EpgAggregator\Export\XmltvExporter;
 use EpgAggregator\Export\JsonExporter;
+use EpgAggregator\Export\ChannelsJsonExporter;
 
 $argvCopy = $argv;
 array_shift($argvCopy); // zahodíme názov skriptu
@@ -183,26 +184,89 @@ switch ($command) {
         $path   = $argvCopy[2] ?? null;
 
         if ($format === null || $path === null) {
-            fwrite(STDERR, "Usage:\n");
-            fwrite(STDERR, "  epg export xmltv /path/to/epg.xml[.gz]\n");
-            fwrite(STDERR, "  epg export json  /path/to/epg.json\n");
+            fwrite(STDERR, "Usage: epg export [xmltv|json|channels-json] output-path\n");
             exit(1);
         }
 
+        // vždy sa uistíme, že schema existuje
         $schemaManager->ensureSchema();
 
         if ($format === 'xmltv') {
             $exporter = new XmltvExporter($channelRepo, $programRepo);
             $exporter->export($path);
             echo "XMLTV exported to {$path}\n";
-        } elseif ($format === 'json') {
+            break;
+        }
+
+        if ($format === 'json') {
             $exporter = new JsonExporter($channelRepo, $programRepo);
             $exporter->export($path);
             echo "JSON exported to {$path}\n";
+            break;
+        }
+
+        if ($format === 'channels-json') {
+            $exporter = new ChannelsJsonExporter($channelRepo);
+            $exporter->export($path);
+            // exporter už vypíše hlášku
+            break;
+        }
+
+        fwrite(STDERR, "Unknown export format: {$format}\n");
+        exit(1);
+
+    case 'channels':
+        $filter = $argvCopy[1] ?? 'all';
+
+        if ($filter === 'all') {
+            $where = '';
+        } elseif ($filter === 'master') {
+            $where = 'WHERE c.is_master = 1';
         } else {
-            fwrite(STDERR, "Unknown export format: {$format}\n");
+            fwrite(STDERR, "Usage: epg channels [all|master]\n");
             exit(1);
         }
+
+        $sql = '
+            SELECT
+                c.id,
+                c.xmltv_id,
+                c.name,
+                c.is_master,
+                c.position,
+                COUNT(p.id) AS program_count
+            FROM channels c
+            LEFT JOIN programs p ON p.channel_id = c.id
+            ' . $where . '
+            GROUP BY c.id, c.xmltv_id, c.name, c.is_master, c.position
+            ORDER BY
+                CASE WHEN c.is_master = 1 THEN 0 ELSE 1 END,
+                COALESCE(c.position, 999999),
+                c.name
+        ';
+
+        $stmt = $pdo->query($sql);
+
+        // hlavička
+        printf("%-4s %-40s %-30s %-6s %-8s %-8s\n",
+            'ID', 'NAME', 'XMLTV_ID', 'MASTER', 'POS', 'PROGRAMS'
+        );
+        printf("%'-4s %'-40s %'-30s %'-6s %'-8s %'-8s\n",
+            '', '', '', '', '', ''
+        );
+
+        while ($row = $stmt->fetch(\PDO::FETCH_ASSOC)) {
+            printf(
+                "%-4d %-40s %-30s %-6s %-8s %-8d\n",
+                $row['id'],
+                substr($row['name'], 0, 40),
+                substr($row['xmltv_id'], 0, 30),
+                $row['is_master'] ? 'yes' : 'no',
+                $row['position'] === null ? '-' : $row['position'],
+                $row['program_count']
+            );
+        }
+
         break;
 
     default:
@@ -214,5 +278,9 @@ switch ($command) {
         echo "  epg export json  epg.json            Export DB as JSON\n";
         echo "  epg master apply master.txt          Apply master channel list from text file\n";
         echo "  epg master rollback                  Rollback to previous master list\n";
+        echo "  epg channels [all|master]            List channels with program counts\n";
+        echo "  epg export channels-json file.json   Export master channels as HLS-Proxy style JSON\n";
+
+        
         exit(0);
 }
