@@ -1,0 +1,18 @@
+# config/epg_sources.txt.example
+# Skopíruj ako epg_sources.txt a uprav podľa potreby.
+# Tento súbor (epg_sources.txt) NIKDY necommituj do GitHubu.
+
+# poradie riadkov = priorita zdrojov (1 = najvyššia)
+
+# 1) aktuálny agregovaný EPG (napr. z hls-proxy / cache)
+http://98.27.17.21/epg.xml
+
+# 2) externý XMLTV zdroj (gzip)
+http://epg.com/onweb.xml.gz
+
+# 3) lokálny infokanál (EIT -> XMLTV)
+https://guru.net.sk/eit/infokanal.xml
+
+# 4) TVHeadend – zoznam kanálov (channels.xml)
+# user:password doplň LOKÁLNE, nie do GitHubu
+http://user:password@91.27.17.20:9981/xmltv/channels/channels.xml
