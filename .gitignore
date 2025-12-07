@@ -6,3 +6,4 @@
 
 composer.lock
 .env
+data-samples/source*.xml*
