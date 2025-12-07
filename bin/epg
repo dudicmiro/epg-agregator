@@ -43,7 +43,7 @@ switch ($command) {
         echo "Database schema ensured at {$dbPath}\n";
         break;
 
-    case 'import':
+case 'import':
         $source = $argvCopy[1] ?? null;
         $path   = $argvCopy[2] ?? null;
 
@@ -52,14 +52,20 @@ switch ($command) {
             exit(1);
         }
 
+        // štart merania času
+        $startedAt = microtime(true);
+
         $schemaManager->ensureSchema();
 
+        // Ingest
         $client = new Source1Client($path);
         $raw    = $client->fetch();
 
+        // Parse
         $parser = new Source1Parser();
         $parsed = $parser->parse($raw);
 
+        // Normalize
         $normalizer = new Source1Normalizer();
         $normalized = $normalizer->normalize($parsed, 'source1');
 
@@ -106,10 +112,15 @@ switch ($command) {
             }
         }
 
-        echo "Import from source1 finished.\n";
+        // koniec merania času
+        $elapsed = microtime(true) - $startedAt;
+        $elapsedFormatted = number_format($elapsed, 3, '.', '');
+
+        echo "Import from source1 finished in {$elapsedFormatted} s.\n";
         echo "  programs inserted:    {$inserted}\n";
         echo "  skipped (no channel): {$skippedNoChannel}\n";
         echo "  skipped (duplicates): {$skippedDuplicate}\n";
+
         break;
 
     case 'master':
