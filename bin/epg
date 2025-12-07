@@ -7,6 +7,7 @@ use EpgAggregator\Store\SqliteConnectionFactory;
 use EpgAggregator\Store\SchemaManager;
 use EpgAggregator\Store\ChannelRepository;
 use EpgAggregator\Store\ProgramRepository;
+use EpgAggregator\Store\SettingsRepository;
 use EpgAggregator\Ingest\Source1Client;        // ak sa volá SourceClient.php
 use EpgAggregator\Parse\Source1Parser;
 use EpgAggregator\Normalize\Source1Normalizer;
@@ -33,6 +34,7 @@ $schemaManager     = new SchemaManager($pdo);
 
 $channelRepo = new ChannelRepository($pdo);
 $programRepo = new ProgramRepository($pdo);
+$settingsRepo = new SettingsRepository($pdo);
 
 switch ($command) {
     case 'migrate':
@@ -109,6 +111,73 @@ switch ($command) {
         echo "  skipped (duplicates): {$skippedDuplicate}\n";
         break;
 
+    case 'master':
+        $sub = $argvCopy[1] ?? null;
+
+        if ($sub === 'apply') {
+            $filePath = $argvCopy[2] ?? null;
+            if ($filePath === null) {
+                fwrite(STDERR, "Usage: epg master apply /path/to/master-list.txt\n");
+                exit(1);
+            }
+            if (!is_file($filePath)) {
+                fwrite(STDERR, "Master list file not found: {$filePath}\n");
+                exit(1);
+            }
+
+            $text = trim((string) file_get_contents($filePath));
+
+            // rollback buffer
+            $current = $settingsRepo->get('master_channels_text_current');
+            if ($current !== null) {
+                $settingsRepo->set('master_channels_text_prev', $current);
+            }
+            $settingsRepo->set('master_channels_text_current', $text);
+
+            $lines = preg_split('/\R/', $text);
+            $names = [];
+            foreach ($lines as $line) {
+                $name = trim($line);
+                if ($name !== '') {
+                    $names[] = $name;
+                }
+            }
+
+            $channelRepo->updateMasterFromList($names);
+
+            echo "Master list applied (" . count($names) . " channels).\n";
+            break;
+        }
+
+        if ($sub === 'rollback') {
+            $prev = $settingsRepo->get('master_channels_text_prev');
+            if ($prev === null) {
+                fwrite(STDERR, "No previous master list to rollback to.\n");
+                exit(1);
+            }
+
+            $settingsRepo->set('master_channels_text_current', $prev);
+
+            $lines = preg_split('/\R/', $prev);
+            $names = [];
+            foreach ($lines as $line) {
+                $name = trim($line);
+                if ($name !== '') {
+                    $names[] = $name;
+                }
+            }
+
+            $channelRepo->updateMasterFromList($names);
+
+            echo "Master list rollback applied (" . count($names) . " channels).\n";
+            break;
+        }
+
+        fwrite(STDERR, "Usage:\n");
+        fwrite(STDERR, "  epg master apply /path/to/master-list.txt\n");
+        fwrite(STDERR, "  epg master rollback\n");
+        exit(1);
+
     case 'export':
         $format = $argvCopy[1] ?? null;
         $path   = $argvCopy[2] ?? null;
@@ -143,5 +212,7 @@ switch ($command) {
         echo "  epg import source1 file.xml[.gz]     Import XMLTV file from source1\n";
         echo "  epg export xmltv epg.xml[.gz]        Export DB as XMLTV\n";
         echo "  epg export json  epg.json            Export DB as JSON\n";
+        echo "  epg master apply master.txt          Apply master channel list from text file\n";
+        echo "  epg master rollback                  Rollback to previous master list\n";
         exit(0);
 }

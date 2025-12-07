@@ -14,7 +14,7 @@ final class JsonExporter
 
     public function export(string $filePath): void
     {
-        $channels = $this->channelRepo->findAll();
+        $channels = $this->channelRepo->findAllMaster();
 
         $out = [
             'generated_at_utc' => (new \DateTimeImmutable('now', new \DateTimeZone('UTC')))->format(DATE_ATOM),

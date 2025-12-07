@@ -16,7 +16,7 @@ final class XmltvExporter
 
     public function export(string $filePath): void
     {
-        $channels = $this->channelRepo->findAll();
+        $channels = $this->channelRepo->findAllMaster();
 
         $writer = new XMLWriter();
         $writer->openMemory();
